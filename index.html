@@ -23,6 +23,7 @@
   --c-work:#3E63DD; --c-life:#2F9E68; --c-home:#D9820B; --c-etc:#8E4EC6;
   --p0:#0E7C86; --p1:#C2410C; --p2:#6D28D9; --p3:#B91C6B;
   --heat1:#FBD9DA; --heat2:#F5A3A6; --heat3:#E5484D;
+  --anniv:#D6409F; --anniv-soft:#FBE4F1;
   --f-num:"Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
   --f-body:"IBM Plex Sans KR", -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --r:14px;
@@ -34,7 +35,7 @@
   --accent:#FF6369; --accent-ink:#1A0B0C; --ok:#4CC38A;
   --c-work:#7B93F0; --c-life:#4CC38A; --c-home:#F2A33A; --c-etc:#B58AE0;
   --p0:#3CC4CF; --p1:#FB923C; --p2:#A78BFA; --p3:#F472B6;
-  --heat1:#4A2226; --heat2:#8A3338; --heat3:#FF6369; color-scheme:dark}}
+  --heat1:#4A2226; --heat2:#8A3338; --heat3:#FF6369; --anniv:#F07CC4; --anniv-soft:#3A1F31; color-scheme:dark}}
 
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -157,7 +158,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px soli
 /* tab bar + fab */
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:1px solid var(--line);
   padding:6px max(16px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px))}
-.tabs-in{max-width:520px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr)}
+.tabs-in{max-width:520px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr)}
 .tab{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;font-size:11px;color:var(--muted)}
 .tab svg{width:22px;height:22px}
 .tab[aria-current="page"]{color:var(--ink);font-weight:600}
@@ -205,6 +206,24 @@ textarea.field{font-size:15px;min-height:72px;resize:vertical}
 .auth .switch{font-size:14px;color:var(--muted);text-align:center}
 .auth .switch button{color:var(--ink);font-weight:600;text-decoration:underline;text-underline-offset:3px}
 
+/* anniversaries */
+.evm{width:5px;height:5px;border-radius:50%;background:var(--anniv);display:inline-block}
+.evlist{display:flex;flex-direction:column;gap:6px}
+.ev{display:flex;align-items:center;gap:10px;background:var(--anniv-soft);border-radius:12px;padding:10px 14px;text-align:left}
+.ev .ev-k{font-size:11px;font-weight:600;color:var(--anniv);letter-spacing:.03em;flex:none}
+.ev .ev-t{font-weight:600;min-width:0;overflow-wrap:anywhere}
+.ev.ms{background:var(--surface);border:1px dashed var(--anniv)}
+.dgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.dcard{background:var(--surface);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:2px;text-align:left;border-top:3px solid var(--anniv);min-width:0}
+.dc-t{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.dc-n{font-family:var(--f-num);font-weight:800;font-size:34px;line-height:1.05;color:var(--anniv);font-variant-numeric:tabular-nums}
+.dc-s{font-size:12px;color:var(--muted)}
+.dpill{flex:none;align-self:center;font-size:12px;font-weight:600;color:var(--anniv);background:var(--anniv-soft);padding:3px 9px;border-radius:999px;font-variant-numeric:tabular-nums}
+.dpill.soft{background:transparent;border:1px solid var(--anniv-soft)}
+.task.up{width:100%;text-align:left;align-items:center}
+.up-d{flex:none;width:64px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tick{display:inline-grid;place-items:center;width:14px;height:14px;border-radius:4px;border:1.5px solid currentColor;font-size:10px;line-height:1}
+
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(150px + env(safe-area-inset-bottom, 0px));z-index:60;background:var(--ink);color:var(--bg);font-size:14px;padding:9px 16px;border-radius:999px;display:flex;gap:12px;align-items:center;max-width:calc(100% - 32px)}
 .toast button{font-weight:600;color:var(--accent)}
 .boot{min-height:60vh;display:grid;place-items:center;color:var(--muted)}
@@ -226,6 +245,7 @@ textarea.field{font-size:15px;min-height:72px;resize:vertical}
 
 <script src="/config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="/holidays.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

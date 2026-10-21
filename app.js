@@ -13,21 +13,7 @@ const DOW = ['일','월','화','수','목','금','토'];
 const DOW_FULL = ['일요일','월요일','화요일','수요일','목요일','금요일','토요일'];
 const PCOL = ['--p0','--p1','--p2','--p3'];
 
-// 한국 공휴일 (대체공휴일 포함). 출처: kholidayz.com, 2026-10 확인
-const HOLI = {
-  '2026-01-01':'신정','2026-02-16':'설날 연휴','2026-02-17':'설날','2026-02-18':'설날 연휴',
-  '2026-03-01':'삼일절','2026-03-02':'대체공휴일','2026-05-01':'노동절','2026-05-05':'어린이날',
-  '2026-05-24':'부처님오신날','2026-05-25':'대체공휴일','2026-06-03':'지방선거','2026-06-06':'현충일',
-  '2026-07-17':'제헌절','2026-08-15':'광복절','2026-08-17':'대체공휴일','2026-09-24':'추석 연휴',
-  '2026-09-25':'추석','2026-09-26':'추석 연휴','2026-10-03':'개천절','2026-10-05':'대체공휴일',
-  '2026-10-09':'한글날','2026-12-25':'성탄절',
-  '2027-01-01':'신정','2027-02-06':'설날 연휴','2027-02-07':'설날','2027-02-08':'설날 연휴','2027-02-09':'대체공휴일',
-  '2027-03-01':'삼일절','2027-05-01':'노동절','2027-05-03':'대체공휴일','2027-05-05':'어린이날',
-  '2027-05-13':'부처님오신날','2027-06-06':'현충일','2027-07-17':'제헌절','2027-07-19':'대체공휴일',
-  '2027-08-15':'광복절','2027-08-16':'대체공휴일','2027-09-14':'추석 연휴','2027-09-15':'추석',
-  '2027-09-16':'추석 연휴','2027-10-03':'개천절','2027-10-04':'대체공휴일','2027-10-09':'한글날',
-  '2027-10-11':'대체공휴일','2027-12-25':'성탄절','2027-12-27':'대체공휴일',
-};
+const hol = s => (window.KHoliday ? window.KHoliday.holidayName(s) : null);
 
 /* ---------- helpers ---------- */
 const pad = n => String(n).padStart(2,'0');
@@ -66,6 +52,13 @@ let calendars = [];         // [{id, name}]
 let invites = [];
 let channel = null;
 let live = false;
+const annivs = new Map();   // anniversaries
+const KINDS = [
+  {id:'birthday', name:'생일'},
+  {id:'wedding',  name:'결혼기념일'},
+  {id:'etc',      name:'기념일'},
+];
+const kindName = id => (KINDS.find(k => k.id === id) || KINDS[2]).name;
 
 const st = {
   view:'day', sel: today(), cat:'all', showDone:true, logMore:false,
@@ -76,16 +69,140 @@ const rowToTask = r => ({
   id:r.id, title:r.title, note:r.note || '', date:r.date || null, cat:r.cat,
   done:!!r.done, doneAt:r.done_at ? Date.parse(r.done_at) : null, doneBy:r.done_by,
   createdBy:r.created_by, createdAt:r.created_at ? Date.parse(r.created_at) : 0,
+  annivId:r.anniv_id || null, annivOcc:r.anniv_occ || null,
 });
 const taskToRow = t => ({
   id:t.id, calendar_id:cal.id, title:t.title, note:t.note || '', date:t.date || null, cat:t.cat,
   done:!!t.done, done_at:t.doneAt ? new Date(t.doneAt).toISOString() : null, done_by:t.done ? (t.doneBy || null) : null,
   created_by:t.createdBy || me.id, created_at:new Date(t.createdAt || Date.now()).toISOString(),
   updated_by:me.id, updated_at:new Date().toISOString(),
+  anniv_id:t.annivId || null, anniv_occ:t.annivOcc || null,
 });
 
 function cacheKey(){ return 'haru-cache-' + (cal && cal.id); }
 function writeCache(){ if (cal) ls.set(cacheKey(), [...tasks.values()]); }
+function writeAnnivCache(){ if (cal) ls.set('haru-anniv-' + cal.id, [...annivs.values()]); }
+
+const rowToAnniv = r => ({
+  id:r.id, title:r.title, kind:r.kind, date:r.date, lunar:!!r.lunar, yearly:!!r.yearly, dday:!!r.dday,
+  prepTitle:r.prep_title || '', prepDays:r.prep_days || 0, prepLastOcc:r.prep_last_occ || null, createdBy:r.created_by,
+});
+const annivToRow = a => ({
+  id:a.id, calendar_id:cal.id, title:a.title, kind:a.kind, date:a.date, lunar:!!a.lunar, yearly:!!a.yearly, dday:!!a.dday,
+  prep_title:a.prepTitle || '', prep_days:a.prepDays || 0, prep_last_occ:a.prepLastOcc || null,
+  created_by:a.createdBy || me.id, updated_at:new Date().toISOString(),
+});
+
+/* ---------- anniversaries & D-Day ---------- */
+const DAY = 86400000;
+// 실제 시작일(양력). 음력 기념일은 그 해의 음력 월/일을 양력으로 바꾼 날
+function annivStart(a){
+  if (!a.lunar) return a.date;
+  const [y,m,d] = a.date.split('-').map(Number);
+  return (window.KHoliday && window.KHoliday.lunarToSolar(y, m, d)) || a.date;
+}
+// y년의 기념일 날짜(양력)
+function occurrenceIn(a, y){
+  const [y0,m,d] = a.date.split('-').map(Number);
+  if (y < y0) return null;
+  if (a.lunar) return window.KHoliday ? window.KHoliday.lunarToSolar(y, m, d) : null;
+  if (m === 2 && d === 29 && !(y%4===0 && (y%100!==0 || y%400===0))) return `${y}-02-28`;
+  return `${y}-${pad(m)}-${pad(d)}`;
+}
+// 처음 날을 1일로 세는 한국식 D-Day: n일째 = 시작일 + (n-1)일
+const dayCount = (start, s) => diffDays(s, start) + 1;
+const MILESTONES = (() => { const m = []; for (let k = 100; k <= 3000; k += 100) m.push(k); for (let k = 4000; k <= 20000; k += 1000) m.push(k); return m; })();
+
+let evCache = {};
+function eventsForYear(y){
+  if (evCache[y]) return evCache[y];
+  const map = {};
+  const push = (date, ev) => { if (date && date.startsWith(y + '-')) (map[date] = map[date] || []).push(ev); };
+  annivs.forEach(a => {
+    const y0 = Number(a.date.slice(0,4));
+    if (a.yearly || a.dday) {
+      const occ = occurrenceIn(a, y);
+      if (occ) {
+        const n = y - y0;
+        let label = a.title;
+        if (n > 0 && a.kind !== 'birthday') label += ` ${n}주년`;
+        if (a.yearly || n > 0) push(occ, {aid:a.id, label, kind:a.kind, main:true});
+      }
+    } else if (a.date.startsWith(y + '-')) {
+      push(a.date, {aid:a.id, label:a.title, kind:a.kind, main:true});
+    }
+    if (a.dday) {
+      const st0 = annivStart(a);
+      MILESTONES.forEach(k => push(addDays(st0, k - 1), {aid:a.id, label:`${a.title} ${k.toLocaleString('ko-KR')}일`, kind:a.kind, main:false}));
+    }
+  });
+  return (evCache[y] = map);
+}
+const eventsOn = s => eventsForYear(Number(s.slice(0,4)))[s] || [];
+function resetEvents(){ evCache = {}; }
+
+// 오늘 이후 가장 가까운 기념일 날짜
+function nextOccurrence(a){
+  const T = today(), y = Number(T.slice(0,4));
+  if (!a.yearly) return a.date >= T ? a.date : null;
+  for (let yy = y; yy <= y + 2; yy++){ const o = occurrenceIn(a, yy); if (o && o >= T) return o; }
+  return null;
+}
+// 다음 D-Day 기념 숫자
+function nextMilestone(a){
+  const st0 = annivStart(a), n = dayCount(st0, today());
+  const k = MILESTONES.find(x => x >= n);
+  return k ? {k, date:addDays(st0, k-1)} : null;
+}
+function dLabel(s){ const d = diffDays(s, today()); return d === 0 ? 'D-DAY' : d > 0 ? `D-${d}` : `D+${-d}`; }
+
+async function loadAnnivs(){
+  const { data, error } = await sb.from('anniversaries').select('*').eq('calendar_id', cal.id);
+  if (error) return;
+  annivs.clear(); data.forEach(r => annivs.set(r.id, rowToAnniv(r)));
+  resetEvents(); writeAnnivCache();
+}
+async function saveAnniv(a){
+  annivs.set(a.id, a); resetEvents(); writeAnnivCache(); render();
+  const { error } = await sb.from('anniversaries').upsert(annivToRow(a));
+  if (error) { toast('기념일을 저장하지 못했어요.'); return; }
+  ensurePrepTasks();
+}
+async function removeAnniv(id){
+  annivs.delete(id); resetEvents(); writeAnnivCache(); render();
+  const { error } = await sb.from('anniversaries').delete().eq('id', id);
+  if (error) toast('기념일을 삭제하지 못했어요.');
+}
+
+// 기념일 '미리 할 일' 자동 추가: 다가오는 기념일마다 한 번만 만든다
+const prepBusy = new Set();
+async function ensurePrepTasks(){
+  if (!cal) return;
+  const T = today();
+  for (const a of annivs.values()){
+    if (!a.prepTitle) continue;
+    const occ = nextOccurrence(a);
+    if (!occ) continue;
+    if (a.prepLastOcc && a.prepLastOcc >= occ) continue;
+    const prepDate = addDays(occ, -(a.prepDays || 0));
+    if (diffDays(prepDate, T) > 30) continue;           // 30일 안으로 다가오면 추가
+    const key = a.id + occ;
+    if (prepBusy.has(key)) continue;
+    prepBusy.add(key);
+    const exists = [...tasks.values()].some(t => t.annivId === a.id && t.annivOcc === occ);
+    if (!exists) {
+      const t = {id:uuid(), title:`${a.title}: ${a.prepTitle}`, note:`${occ.slice(5).replace('-','/')} ${a.title}을 위한 할 일`, date: prepDate < T ? T : prepDate,
+        cat:'life', done:false, doneAt:null, doneBy:null, createdBy:me.id, createdAt:Date.now(), annivId:a.id, annivOcc:occ};
+      const { error } = await sb.from('tasks').upsert(taskToRow(t), {onConflict:'anniv_id,anniv_occ', ignoreDuplicates:true});
+      if (!error) tasks.set(t.id, t);
+    }
+    const na = {...a, prepLastOcc: occ};
+    annivs.set(a.id, na);
+    await sb.from('anniversaries').update({prep_last_occ: occ}).eq('id', a.id);
+  }
+  writeAnnivCache(); writeCache(); render();
+}
+
 
 /* ---------- auth flow ---------- */
 let authMode = 'login';
@@ -160,10 +277,12 @@ async function openCalendar(){
   ls.set('haru-calid', cal.id);
   tasks.clear();
   (ls.get(cacheKey()) || []).forEach(t => t && t.id && tasks.set(t.id, t));
+  annivs.clear(); (ls.get('haru-anniv-' + cal.id) || []).forEach(a => a && a.id && annivs.set(a.id, a)); resetEvents();
   showMain(); render();
-  await Promise.all([loadPeople(), loadTasks(), loadInvites()]);
+  await Promise.all([loadPeople(), loadTasks(), loadInvites(), loadAnnivs()]);
   subscribe();
   render();
+  ensurePrepTasks();
 }
 
 async function loadTasks(){
@@ -191,6 +310,10 @@ function subscribe(){
     .on('postgres_changes', {event:'INSERT', schema:'public', table:'tasks', filter:`calendar_id=eq.${cal.id}`}, p => { tasks.set(p.new.id, rowToTask(p.new)); writeCache(); render(); })
     .on('postgres_changes', {event:'UPDATE', schema:'public', table:'tasks', filter:`calendar_id=eq.${cal.id}`}, p => { tasks.set(p.new.id, rowToTask(p.new)); writeCache(); render(); })
     .on('postgres_changes', {event:'DELETE', schema:'public', table:'tasks'}, p => { if (p.old && tasks.delete(p.old.id)) { writeCache(); render(); } })
+    .on('postgres_changes', {event:'*', schema:'public', table:'anniversaries', filter:`calendar_id=eq.${cal.id}`}, p => {
+      if (p.eventType === 'DELETE') annivs.delete(p.old.id); else annivs.set(p.new.id, rowToAnniv(p.new));
+      resetEvents(); writeAnnivCache(); render(); })
+    .on('postgres_changes', {event:'DELETE', schema:'public', table:'anniversaries'}, p => { if (p.old && annivs.delete(p.old.id)) { resetEvents(); writeAnnivCache(); render(); } })
     .subscribe(status => {
       const was = live; live = status === 'SUBSCRIBED';
       if (was !== live && st.view) render();
@@ -220,6 +343,7 @@ const ICON = {
   day:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
   box:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 13l2.5-7.5h11L20 13v6H4z"/><path d="M4 13h5l1 2h4l1-2h5"/></svg>',
   log:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V9M10 19V5M16 19v-7M21 19H3"/></svg>',
+  anniv:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>',
 };
 
 /* ---------- rendering ---------- */
@@ -277,7 +401,7 @@ function renderDay(){
   const all = [...tasks.values()];
   const isToday = sel === T;
   const undoneOn = s => all.filter(t => !t.done && t.date === s).length;
-  const dots = n => `<span class="dots">${'<i></i>'.repeat(Math.min(n,3))}</span>`;
+  const dots = (n, s) => `<span class="dots">${eventsOn(s).length ? '<b class="evm"></b>' : ''}${'<i></i>'.repeat(Math.min(n,3))}</span>`;
 
   let calHTML = '';
   if (st.cal === 'week') {
@@ -285,9 +409,9 @@ function renderDay(){
     let week = '';
     for (let i = 0; i < 7; i++){
       const s = addDays(start, i), n = undoneOn(s), dd = parse(s);
-      const cls = ['day', i===0?'sun':'', HOLI[s]?'hol':'', s===T?'today':'', s===sel?'sel':''].join(' ');
-      week += `<button class="${cls}" data-act="pick" data-date="${s}" aria-label="${dd.getMonth()+1}월 ${dd.getDate()}일${HOLI[s]?' '+HOLI[s]:''}, 할 일 ${n}개">
-        <span class="dw">${DOW[i]}</span><span class="dn">${dd.getDate()}</span>${dots(n)}</button>`;
+      const cls = ['day', i===0?'sun':'', hol(s)?'hol':'', s===T?'today':'', s===sel?'sel':''].join(' ');
+      week += `<button class="${cls}" data-act="pick" data-date="${s}" aria-label="${dd.getMonth()+1}월 ${dd.getDate()}일${hol(s)?' '+hol(s):''}, 할 일 ${n}개">
+        <span class="dw">${DOW[i]}</span><span class="dn">${dd.getDate()}</span>${dots(n, s)}</button>`;
     }
     calHTML = `<div class="week cal-swipe">
       <button class="wk-nav" data-act="week" data-dir="-1" aria-label="이전 주">‹</button>${week}
@@ -298,9 +422,9 @@ function renderDay(){
     let cells = DOW.map((x,i) => `<div class="hd${i===0?' sun':''}">${x}</div>`).join('');
     for (let i = 0; i < 42; i++){
       const s = addDays(gStart, i), dd = parse(s), n = undoneOn(s);
-      const cls = ['mday', i%7===0?'sun':'', HOLI[s]?'hol':'', dd.getMonth()!==d.getMonth()?'out':'', s===T?'today':'', s===sel?'sel':''].join(' ');
-      cells += `<button class="${cls}" data-act="pick" data-date="${s}" aria-label="${dd.getMonth()+1}월 ${dd.getDate()}일${HOLI[s]?' '+HOLI[s]:''}, 할 일 ${n}개">
-        <span class="dn">${dd.getDate()}</span>${dots(n)}</button>`;
+      const cls = ['mday', i%7===0?'sun':'', hol(s)?'hol':'', dd.getMonth()!==d.getMonth()?'out':'', s===T?'today':'', s===sel?'sel':''].join(' ');
+      cells += `<button class="${cls}" data-act="pick" data-date="${s}" aria-label="${dd.getMonth()+1}월 ${dd.getDate()}일${hol(s)?' '+hol(s):''}, 할 일 ${n}개">
+        <span class="dn">${dd.getDate()}</span>${dots(n, s)}</button>`;
     }
     calHTML = `<div class="month cal-swipe"><div class="m-head">
       <button class="wk-nav" data-act="month" data-dir="-1" aria-label="이전 달">‹</button>
@@ -318,6 +442,9 @@ function renderDay(){
   const pct = totalNow ? Math.round(dayDone.length / totalNow * 100) : 0;
 
   let body = '';
+  const evs = eventsOn(sel);
+  if (evs.length) body += `<div class="evlist">${evs.map(e => `<button class="ev ${e.main?'':'ms'}" data-act="anniv" data-id="${e.aid}">
+      <span class="ev-k">${e.main ? esc(kindName(e.kind)) : 'D-Day'}</span><span class="ev-t">${esc(e.label)}</span></button>`).join('')}</div>`;
   if (o.length) body += `<section class="sec"><div class="sec-h warn"><span>밀린 일 ${o.length}</span><button data-act="pullAll">모두 오늘로</button></div>
     <div class="list">${o.map(t => taskRow(t, {late: diffDays(T, t.date), action:{k:'pull', label:'오늘로'}})).join('')}</div></section>`;
   if (td.length) body += `<section class="sec"><div class="sec-h"><span>${isToday?'오늘 할 일':'이 날 할 일'} ${td.length}</span></div>
@@ -338,14 +465,14 @@ function renderDay(){
   if (dn.length) body += `<section class="sec"><div class="sec-h"><span>완료 ${dn.length}</span><button data-act="toggleDone">${st.showDone?'접기':'펼치기'}</button></div>
     ${st.showDone ? `<div class="list">${dn.map(t => taskRow(t)).join('')}</div>` : ''}</section>`;
 
-  const red = isToday || HOLI[sel] || d.getDay() === 0;
+  const red = isToday || hol(sel) || d.getDay() === 0;
   return `
   <header class="top">
     <div class="date-big">
       <div class="date-num${red?' red':''}">${d.getDate()}</div>
       <div class="date-meta"><span class="date-month">${d.getFullYear()}년 ${d.getMonth()+1}월</span>
         <span class="date-dow">${DOW_FULL[d.getDay()]}</span><span class="date-rel">${relLabel(sel)}</span>
-        ${HOLI[sel] ? `<span class="date-hol">${HOLI[sel]}</span>` : ''}</div>
+        ${hol(sel) ? `<span class="date-hol">${esc(hol(sel))}</span>` : ''}</div>
     </div>
     <div class="top-right">
       ${peopleBtn()}
@@ -421,8 +548,51 @@ function renderLog(){
     ${days.length > 10 && !st.logMore ? '<button class="pill-btn" data-act="logMore" style="align-self:center">이전 기록 더 보기</button>' : ''}`;
 }
 
+function renderAnniv(){
+  const T = today();
+  const list = [...annivs.values()].map(a => ({a, next: nextOccurrence(a)}))
+    .sort((x, y) => (x.next || '9999') < (y.next || '9999') ? -1 : 1);
+  const ddays = [...annivs.values()].filter(a => a.dday);
+
+  // 앞으로 60일 동안의 기념일 + D-Day
+  const upcoming = [];
+  for (let i = 0; i <= 60; i++){ const d = addDays(T, i); eventsOn(d).forEach(e => upcoming.push({d, e})); }
+
+  const dcards = ddays.map(a => {
+    const st0 = annivStart(a), n = dayCount(st0, T), nm = nextMilestone(a);
+    const future = st0 > T;
+    return `<button class="dcard" data-act="anniv" data-id="${a.id}">
+      <span class="dc-t">${esc(a.title)}</span>
+      <span class="dc-n">${future ? dLabel(st0) : `${n.toLocaleString('ko-KR')}일째`}</span>
+      <span class="dc-s">${future ? `${st0.replace(/-/g,'.')} 시작` : nm ? `${nm.k.toLocaleString('ko-KR')}일까지 ${dLabel(nm.date)} · ${parse(nm.date).getMonth()+1}월 ${parse(nm.date).getDate()}일` : ''}</span>
+    </button>`;
+  }).join('');
+
+  const rows = list.map(({a, next}) => {
+    const [y,m,d] = a.date.split('-');
+    const orig = `${a.lunar ? '음력 ' : ''}${y}.${m}.${d}`;
+    const meta = [kindName(a.kind), orig, a.yearly ? '매년' : '한 번', a.dday ? 'D-Day' : '', a.prepTitle ? `${a.prepDays ? a.prepDays + '일 전' : '당일'} 할 일: ${esc(a.prepTitle)}` : ''].filter(Boolean);
+    return `<div class="task" data-row="${a.id}">
+      <button class="t-body" data-act="anniv" data-id="${a.id}"><span class="t-title">${esc(a.title)}</span><span class="t-meta">${meta.map(x => `<span>${x}</span>`).join('')}</span></button>
+      ${next ? `<span class="dpill">${dLabel(next)}</span>` : ''}</div>`;
+  }).join('');
+
+  const up = upcoming.length ? `<section class="sec"><div class="sec-h"><span>앞으로 60일</span></div><div class="list">${upcoming.map(({d, e}) => {
+      const dd = parse(d);
+      return `<button class="task up" data-act="pickFromLog" data-date="${d}"><span class="up-d">${dd.getMonth()+1}/${dd.getDate()} ${DOW[dd.getDay()]}</span>
+        <span class="t-body"><span class="t-title">${esc(e.label)}</span></span><span class="dpill${e.main?'':' soft'}">${dLabel(d)}</span></button>`;
+    }).join('')}</div></section>` : '';
+
+  return pageHead('생일, 결혼기념일, D-Day', '기념일') + `
+    <button class="pill-btn" data-act="addAnniv" style="align-self:flex-start">+ 기념일 추가</button>
+    ${dcards ? `<div class="dgrid">${dcards}</div>` : ''}
+    ${up}
+    ${rows ? `<section class="sec"><div class="sec-h"><span>모든 기념일 ${annivs.size}</span></div><div class="list">${rows}</div></section>`
+           : '<div class="empty"><strong>기념일을 추가해 보세요</strong><p>생일과 결혼기념일은 매년 캘린더에 표시되고, 미리 할 일(예: 선물 준비)을 자동으로 넣어드려요. D-Day를 켜면 100일, 1주년 같은 날도 보여요.</p></div>'}`;
+}
+
 function renderTabs(){
-  const t = [['day','오늘','day'],['box','보관함','box'],['log','기록','log']];
+  const t = [['day','오늘','day'],['box','보관함','box'],['anniv','기념일','anniv'],['log','기록','log']];
   document.getElementById('tabs').innerHTML = t.map(([k,l,i]) =>
     `<button class="tab" data-act="view" data-view="${k}" ${st.view===k?'aria-current="page"':''}>${ICON[i]}${l}</button>`).join('');
 }
@@ -430,7 +600,7 @@ function renderTabs(){
 let lastToggled = null;
 function render(){
   if (!me || !cal) return;
-  $app.innerHTML = st.view === 'day' ? renderDay() : st.view === 'box' ? renderBox() : renderLog();
+  $app.innerHTML = st.view === 'day' ? renderDay() : st.view === 'box' ? renderBox() : st.view === 'anniv' ? renderAnniv() : renderLog();
   renderTabs();
   if (lastToggled) { const r = $app.querySelector(`[data-row="${lastToggled}"]`); if (r) r.classList.add('pop'); lastToggled = null; }
 }
@@ -505,6 +675,76 @@ function commit(keepOpen){
   closeSheet();
 }
 
+/* ---------- anniversary sheet ---------- */
+const PREP_DEFAULT = {birthday:'선물 준비', wedding:'기념일 준비', etc:''};
+function openAnnivSheet(a){
+  if (a) sheet = {mode:'anniv', id:a.id, title:a.title, kind:a.kind, date:a.date, lunar:a.lunar, yearly:a.yearly, dday:a.dday, prepTitle:a.prepTitle, prepDays:a.prepDays, armed:false};
+  else sheet = {mode:'anniv', id:null, title:'', kind:'birthday', date:'', lunar:false, yearly:true, dday:false, prepTitle:PREP_DEFAULT.birthday, prepDays:7, armed:false};
+  drawAnnivSheet(true);
+}
+function drawAnnivSheet(focus){
+  const s = sheet, isNew = !s.id;
+  const chip = (k, v, on, label) => `<button class="chip" data-an="${k}" data-v="${v}" aria-pressed="${on}">${label}</button>`;
+  const toggle = (k, on, label) => `<button class="chip" data-an="${k}" aria-pressed="${on}"><span class="tick">${on ? '✓' : ''}</span>${label}</button>`;
+  let preview = '';
+  if (s.date && s.dday) {
+    const st0 = s.lunar && window.KHoliday ? (window.KHoliday.lunarToSolar(...s.date.split('-').map(Number)) || s.date) : s.date;
+    const n = dayCount(st0, today());
+    preview = st0 > today() ? `${dLabel(st0)} 남았어요` : `오늘이 ${n.toLocaleString('ko-KR')}일째예요 (시작일을 1일로 셈)`;
+  }
+  document.getElementById('sheetRoot').innerHTML = `<div class="scrim" data-an="close"></div>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="${isNew?'기념일 추가':'기념일 수정'}"><div class="sheet-in">
+    <div class="grab"></div>
+    <h2>${isNew?'기념일 추가':'기념일 수정'}</h2>
+    <input class="field" id="anTitle" placeholder="이름 (예: 엄마 생신, 우리 결혼기념일)" value="${esc(s.title)}" autocomplete="off">
+    <div class="lbl">종류</div><div class="chips">${KINDS.map(k => chip('kind', k.id, s.kind===k.id, k.name)).join('')}</div>
+    <div class="lbl">${s.lunar ? '음력 날짜 (태어난 해 또는 시작한 해 포함)' : '날짜 (태어난 날, 결혼한 날, 시작한 날)'}</div>
+    <div class="inline"><input class="field" id="anDate" type="date" value="${esc(s.date)}"></div>
+    <div class="chips wrap">${toggle('lunar', s.lunar, '음력')}${toggle('yearly', s.yearly, '매년 반복')}${toggle('dday', s.dday, 'D-Day 세기 (100일, 주년)')}</div>
+    ${preview ? `<p class="hint">${preview}</p>` : ''}
+    <div class="lbl">미리 할 일 (자동 추가)</div>
+    <input class="field" id="anPrep" placeholder="예: 선물 준비, 식당 예약 (비우면 추가 안 함)" value="${esc(s.prepTitle)}" autocomplete="off" style="font-size:15px">
+    <div class="chips wrap">${[0,1,3,7,14,30].map(d => chip('prepDays', d, s.prepDays===d, d ? d + '일 전' : '당일')).join('')}</div>
+    <p class="hint">기념일이 다가오면 그 날짜에 할 일로 들어가요.</p>
+    <div class="row">
+      ${isNew ? '<button class="btn" data-an="close">닫기</button>'
+              : `<button class="btn danger${s.armed?' armed':''}" data-an="del">${s.armed?'한 번 더 누르면 삭제':'삭제'}</button>`}
+      <button class="btn primary" data-an="save">${isNew ? '추가' : '저장'}</button>
+    </div>
+  </div></div>`;
+  document.getElementById('anTitle').addEventListener('input', e => s.title = e.target.value);
+  document.getElementById('anPrep').addEventListener('input', e => s.prepTitle = e.target.value);
+  document.getElementById('anDate').addEventListener('change', e => { s.date = e.target.value; drawAnnivSheet(false); });
+  if (focus) document.getElementById('anTitle').focus();
+}
+function annivAct(k, v){
+  const s = sheet;
+  if (k === 'close') return closeSheet();
+  if (k === 'kind') {
+    if (!s.id && (s.prepTitle === '' || Object.values(PREP_DEFAULT).includes(s.prepTitle))) s.prepTitle = PREP_DEFAULT[v];
+    s.kind = v;
+    return drawAnnivSheet(false);
+  }
+  if (k === 'lunar' || k === 'yearly' || k === 'dday') { s[k] = !s[k]; return drawAnnivSheet(false); }
+  if (k === 'prepDays') { s.prepDays = Number(v); return drawAnnivSheet(false); }
+  if (k === 'del') {
+    if (!s.armed) { s.armed = true; return drawAnnivSheet(false); }
+    const a = annivs.get(s.id); closeSheet();
+    if (a) { removeAnniv(a.id); toast('삭제했어요', () => saveAnniv({...a, prepLastOcc:a.prepLastOcc})); }
+    return;
+  }
+  if (k === 'save') {
+    const title = s.title.trim();
+    if (!title) { document.getElementById('anTitle').focus(); return; }
+    if (!s.date) { document.getElementById('anDate').focus(); toast('날짜를 골라주세요'); return; }
+    const old = s.id && annivs.get(s.id);
+    const changedDate = old && (old.date !== s.date || old.lunar !== s.lunar);
+    saveAnniv({id: s.id || uuid(), title, kind:s.kind, date:s.date, lunar:s.lunar, yearly:s.yearly, dday:s.dday,
+      prepTitle:s.prepTitle.trim(), prepDays:s.prepDays, prepLastOcc: old && !changedDate ? old.prepLastOcc : null, createdBy: old ? old.createdBy : me.id});
+    closeSheet(); toast(s.id ? '저장했어요' : '기념일을 추가했어요');
+  }
+}
+
 /* ---------- settings sheet ---------- */
 let setMsg = null;
 function openSettings(){ sheet = {mode:'settings'}; setMsg = null; drawSettings(); }
@@ -541,6 +781,8 @@ function drawSettings(){
 }
 
 document.getElementById('sheetRoot').addEventListener('click', async e => {
+  const an = e.target.closest('[data-an]');
+  if (an && sheet && sheet.mode === 'anniv') return annivAct(an.dataset.an, an.dataset.v);
   const st2 = e.target.closest('[data-st]');
   if (st2 && sheet && sheet.mode === 'settings') return settingsAct(st2.dataset.st, st2.dataset.v);
   const b = e.target.closest('[data-sh]'); if (!b || !sheet) return;
@@ -602,7 +844,7 @@ function shiftMonth(dir){
 
 $app.addEventListener('click', onAct);
 document.getElementById('tabs').addEventListener('click', onAct);
-document.getElementById('fab').addEventListener('click', () => openSheet(null));
+document.getElementById('fab').addEventListener('click', () => st.view === 'anniv' ? openAnnivSheet(null) : openSheet(null));
 
 function onAct(e){
   const b = e.target.closest('[data-act]'); if (!b) return;
@@ -631,6 +873,8 @@ function onAct(e){
     case 'logMore': st.logMore = true; render(); break;
     case 'add': openSheet(null); break;
     case 'settings': openSettings(); break;
+    case 'addAnniv': openAnnivSheet(null); break;
+    case 'anniv': { const a = annivs.get(id); if (a) openAnnivSheet(a); } break;
   }
 }
 
@@ -649,8 +893,9 @@ let lastDay = today();
 document.addEventListener('visibilitychange', async () => {
   if (document.hidden || !me || !cal) return;
   if (today() !== lastDay) { if (st.sel === lastDay) st.sel = today(); lastDay = today(); }
-  await Promise.all([loadTasks(), loadPeople(), loadInvites()]);
+  await Promise.all([loadTasks(), loadPeople(), loadInvites(), loadAnnivs()]);
   render();
+  ensurePrepTasks();
 });
 
 /* ---------- boot ---------- */
@@ -660,7 +905,7 @@ sb.auth.onAuthStateChange((event, session) => {
     if (!started) { started = true; setTimeout(() => start(session.user), 0); }
     else me = session.user;
   } else if (event === 'SIGNED_OUT' || !session) {
-    started = false; me = null; cal = null; tasks.clear(); people.clear();
+    started = false; me = null; cal = null; tasks.clear(); people.clear(); annivs.clear(); resetEvents();
     if (channel) { sb.removeChannel(channel); channel = null; }
     renderAuth();
   }

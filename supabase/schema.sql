@@ -133,3 +133,32 @@ alter table public.tasks replica identity full;
 do $$ begin
   alter publication supabase_realtime add table public.tasks;
 exception when duplicate_object then null; end $$;
+
+-- 기념일 / D-Day
+create table if not exists public.anniversaries (
+  id uuid primary key default gen_random_uuid(),
+  calendar_id uuid not null references public.calendars on delete cascade,
+  title text not null,
+  kind text not null default 'etc',
+  date date not null,
+  lunar boolean not null default false,
+  yearly boolean not null default true,
+  dday boolean not null default false,
+  prep_title text not null default '',
+  prep_days int not null default 0,
+  prep_last_occ date,
+  created_by uuid references auth.users on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists anniversaries_calendar_idx on public.anniversaries (calendar_id);
+alter table public.anniversaries enable row level security;
+create policy "anniversaries all" on public.anniversaries for all to authenticated
+  using (public.is_member(calendar_id)) with check (public.is_member(calendar_id));
+
+alter table public.tasks add column if not exists anniv_id uuid references public.anniversaries on delete set null;
+alter table public.tasks add column if not exists anniv_occ date;
+create unique index if not exists tasks_anniv_occ_uniq on public.tasks (anniv_id, anniv_occ);
+
+alter table public.anniversaries replica identity full;
+alter publication supabase_realtime add table public.anniversaries;
