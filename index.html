@@ -221,6 +221,28 @@ textarea.field{font-size:15px;min-height:72px;resize:vertical}
 .av.ghost{background:var(--soft);color:var(--muted)}
 .t-act.danger-on{background:var(--accent);color:var(--accent-ink)}
 
+/* expanded month (pull down) */
+.grip{display:grid;place-items:center;height:18px;margin-top:2px}
+.grip span{width:36px;height:4px;border-radius:2px;background:var(--line)}
+.top.compact{align-items:center}
+.month.big{padding:6px 2px 8px;margin:0 -12px}
+.month.big .m-grid{grid-template-rows:auto repeat(var(--weeks),minmax(92px,calc((100dvh - 290px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px)) / var(--weeks))));row-gap:0}
+.month.big .mday{align-items:stretch;justify-content:flex-start;gap:2px;padding:3px 1px;border-top:1px solid var(--line);min-width:0;overflow:hidden}
+.month.big .mday .dn{width:22px;height:22px;font-size:14px;align-self:center;flex:none}
+.month.big .mday.sat .dn{color:var(--c-work)}
+.month.big .mday.sun .dn,.month.big .mday.hol .dn{color:var(--accent)}
+.month.big .mday.sel{background:var(--soft)}
+.month.big .mday.sel .dn{background:transparent;color:inherit}
+.month.big .mday.today .dn{background:var(--accent);color:var(--accent-ink);box-shadow:none}
+.bitems{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bi{display:block;font-size:10.5px;line-height:1.35;padding:1px 3px;border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:clip;text-align:left;
+  background:color-mix(in srgb, var(--cc, var(--muted)) 16%, transparent);border-left:2px solid var(--cc, var(--muted));color:var(--ink)}
+.bi.dn-t{text-decoration:line-through;color:var(--muted);opacity:.75}
+.bi.hl{background:color-mix(in srgb, var(--accent) 12%, transparent);border-left:0;color:var(--accent);font-weight:500}
+.bi.ev{background:var(--anniv-soft);border-left:2px solid var(--anniv);font-weight:500}
+.bi.ev.ms{background:transparent;border:1px dashed var(--anniv);border-left-width:1px}
+.bmore{font-size:10px;color:var(--muted);text-align:center}
+
 /* anniversaries */
 .evm{width:5px;height:5px;border-radius:50%;background:var(--anniv);display:inline-block}
 .evlist{display:flex;flex-direction:column;gap:6px}

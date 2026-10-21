@@ -63,6 +63,7 @@ const kindName = id => (KINDS.find(k => k.id === id) || KINDS[2]).name;
 const st = {
   view:'day', sel: today(), cat:'all', showDone:true, logMore:false,
   cal: ls.get('haru-cal') === 'week' ? 'week' : 'month',
+  big: ls.get('haru-big') === true,
 };
 
 const rowToTask = r => ({
@@ -423,17 +424,35 @@ function renderDay(){
     const first = new Date(d.getFullYear(), d.getMonth(), 1);
     const gStart = addDays(ymd(first), -first.getDay());
     let cells = DOW.map((x,i) => `<div class="hd${i===0?' sun':''}">${x}</div>`).join('');
-    for (let i = 0; i < 42; i++){
+    // 마지막 주가 다음 달로만 채워지면 5주만 표시
+    const weeks = addDays(gStart, 35).slice(0,7) === ymd(first).slice(0,7) ? 6 : 5;
+    const byDate = {};
+    if (st.big) all.forEach(t => { if (t.date) (byDate[t.date] = byDate[t.date] || []).push(t); });
+    for (let i = 0; i < weeks * 7; i++){
       const s = addDays(gStart, i), dd = parse(s), n = undoneOn(s);
-      const cls = ['mday', i%7===0?'sun':'', hol(s)?'hol':'', dd.getMonth()!==d.getMonth()?'out':'', s===T?'today':'', s===sel?'sel':''].join(' ');
-      cells += `<button class="${cls}" data-act="pick" data-date="${s}" aria-label="${dd.getMonth()+1}월 ${dd.getDate()}일${hol(s)?' '+hol(s):''}, 할 일 ${n}개">
-        <span class="dn">${dd.getDate()}</span>${dots(n, s)}</button>`;
+      const cls = ['mday', i%7===0?'sun':'', i%7===6?'sat':'', hol(s)?'hol':'', dd.getMonth()!==d.getMonth()?'out':'', s===T?'today':'', s===sel?'sel':''].join(' ');
+      const label = `${dd.getMonth()+1}월 ${dd.getDate()}일${hol(s)?' '+hol(s):''}, 할 일 ${n}개`;
+      if (!st.big) {
+        cells += `<button class="${cls}" data-act="pick" data-date="${s}" aria-label="${label}">
+          <span class="dn">${dd.getDate()}</span>${dots(n, s)}</button>`;
+        continue;
+      }
+      const items = [];
+      if (hol(s)) items.push(`<span class="bi hl">${esc(hol(s))}</span>`);
+      eventsOn(s).forEach(e => items.push(`<span class="bi ev${e.main?'':' ms'}">${esc(e.label)}</span>`));
+      (byDate[s] || []).sort((a,b) => (a.done - b.done) || (a.createdAt - b.createdAt))
+        .forEach(t => items.push(`<span class="bi${t.done?' dn-t':''}" style="--cc:var(${catOf(t.cat).v})">${esc(t.title)}</span>`));
+      const MAX = 4, more = items.length - MAX;
+      cells += `<button class="${cls}" data-act="pickBig" data-date="${s}" aria-label="${label}">
+        <span class="dn">${dd.getDate()}</span>
+        <span class="bitems">${items.slice(0, more > 0 ? MAX - 1 : MAX).join('')}${more > 0 ? `<span class="bmore">+${more + 1}</span>` : ''}</span></button>`;
     }
-    calHTML = `<div class="month cal-swipe"><div class="m-head">
+    calHTML = `<div class="month cal-swipe${st.big?' big':''}"><div class="m-head">
       <button class="wk-nav" data-act="month" data-dir="-1" aria-label="이전 달">‹</button>
       <span>${d.getFullYear()}년 ${d.getMonth()+1}월</span>
       <button class="wk-nav" data-act="month" data-dir="1" aria-label="다음 달">›</button></div>
-      <div class="m-grid">${cells}</div></div>`;
+      <div class="m-grid" style="--weeks:${weeks}">${cells}</div>
+      <button class="grip" data-act="big" aria-label="${st.big ? '달력 접기' : '달력 펼쳐서 할 일 보기'}"><span></span></button></div>`;
   }
 
   const overdue = isToday ? all.filter(t => !t.done && t.date && t.date < T).sort((a,b)=> a.date < b.date ? -1 : 1) : [];
@@ -468,6 +487,17 @@ function renderDay(){
   if (dn.length) body += `<section class="sec"><div class="sec-h"><span>완료 ${dn.length}</span><button data-act="toggleDone">${st.showDone?'접기':'펼치기'}</button></div>
     ${st.showDone ? `<div class="list">${dn.map(t => taskRow(t)).join('')}</div>` : ''}</section>`;
 
+  if (st.cal === 'month' && st.big) {
+    return `<header class="top compact">
+      <div class="date-meta"><span class="date-dow" style="font-size:22px">${d.getFullYear()}년 ${d.getMonth()+1}월</span></div>
+      <div class="top-right">${peopleBtn()}<div class="top-btns">
+        ${sel.slice(0,7) === T.slice(0,7) ? '' : '<button class="pill-btn" data-act="goToday">오늘</button>'}
+        <div class="seg" role="group" aria-label="달력 보기">
+          <button data-act="cal" data-v="week" aria-pressed="false">주</button>
+          <button data-act="cal" data-v="month" aria-pressed="true">월</button>
+        </div></div></div>
+    </header>${calHTML}`;
+  }
   const red = isToday || hol(sel) || d.getDay() === 0;
   return `
   <header class="top">
@@ -876,7 +906,8 @@ async function settingsAct(k, v){
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheet) closeSheet(); });
 
 /* ---------- main actions ---------- */
-function setCal(v){ st.cal = v; ls.set('haru-cal', v); render(); }
+function setCal(v){ st.cal = v; ls.set('haru-cal', v); if (v === 'week') { st.big = false; ls.set('haru-big', false); } render(); }
+function setBig(v){ st.big = v; ls.set('haru-big', v); if (v) { st.cal = 'month'; ls.set('haru-cal', 'month'); } render(); window.scrollTo(0, 0); }
 function shiftMonth(dir){
   const d = parse(st.sel), m = new Date(d.getFullYear(), d.getMonth() + dir, 1);
   const T = parse(today());
@@ -904,6 +935,8 @@ function onAct(e){
       saveMany(list.map(x => ({...x, date:T}))); toast(`${list.length}개를 오늘로 옮겼어요`, () => saveMany(list));
     } break;
     case 'pick': st.sel = b.dataset.date; render(); break;
+    case 'pickBig': st.sel = b.dataset.date; setBig(false); break;
+    case 'big': setBig(!st.big); break;
     case 'pickFromLog': st.sel = b.dataset.date; st.view = 'day'; render(); break;
     case 'week': st.sel = addDays(st.sel, 7 * Number(b.dataset.dir)); render(); break;
     case 'month': shiftMonth(Number(b.dataset.dir)); break;
@@ -921,10 +954,18 @@ function onAct(e){
 }
 
 // swipe on calendar
-let sx = null;
-$app.addEventListener('touchstart', e => { if (e.target.closest('.cal-swipe')) sx = e.touches[0].clientX; }, {passive:true});
+let sx = null, sy = null;
+$app.addEventListener('touchstart', e => {
+  if (e.target.closest('.cal-swipe')) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }
+}, {passive:true});
 $app.addEventListener('touchend', e => {
-  if (sx === null) return; const dx = e.changedTouches[0].clientX - sx; sx = null;
+  if (sx === null) return;
+  const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy; sx = sy = null;
+  if (Math.abs(dy) > Math.abs(dx) * 1.3 && Math.abs(dy) > 50) {
+    if (dy > 0 && !st.big && window.scrollY <= 5) setBig(true);   // 아래로 쓸면 펼치기
+    else if (dy < 0 && st.big) setBig(false);                     // 위로 쓸면 접기
+    return;
+  }
   if (Math.abs(dx) <= 50) return;
   if (st.cal === 'month') shiftMonth(dx < 0 ? 1 : -1);
   else { st.sel = addDays(st.sel, dx < 0 ? 7 : -7); render(); }
