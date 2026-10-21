@@ -180,7 +180,7 @@ async function loadPeople(){
   }));
 }
 async function loadInvites(){
-  const { data } = await sb.from('invites').select('email').eq('calendar_id', cal.id);
+  const { data } = await sb.from('invites').select('email').eq('calendar_id', cal.id).is('accepted_at', null);
   invites = (data || []).map(r => r.email);
 }
 
@@ -507,7 +507,7 @@ function commit(keepOpen){
 
 /* ---------- settings sheet ---------- */
 let setMsg = null;
-function openSettings(){ sheet = {mode:'settings', armedLeave:false}; setMsg = null; drawSettings(); }
+function openSettings(){ sheet = {mode:'settings'}; setMsg = null; drawSettings(); }
 function drawSettings(){
   const mine = person(me.id);
   const members = [...people.entries()].map(([id,p]) => `<div class="mrow">
@@ -535,7 +535,6 @@ function drawSettings(){
     <div class="inline"><input class="field" id="stMyName" value="${esc(mine.name)}" maxlength="20"><button class="btn" data-st="myname">변경</button></div>
     <div class="row">
       <button class="btn" data-st="logout">로그아웃</button>
-      <button class="btn danger${sheet.armedLeave?' armed':''}" data-st="leave">${sheet.armedLeave?'한 번 더 누르면 나가기':'캘린더 나가기'}</button>
     </div>
     <button class="btn" data-st="close">닫기</button>
   </div></div>`;
@@ -589,12 +588,6 @@ async function settingsAct(k, v){
     cal = {...c}; closeSheet(); st.sel = today(); return openCalendar();
   }
   if (k === 'logout') { closeSheet(); await sb.auth.signOut(); return; }
-  if (k === 'leave') {
-    if (!sheet.armedLeave) { sheet.armedLeave = true; return drawSettings(); }
-    await sb.rpc('leave_calendar', {cid: cal.id});
-    ls.set('haru-calid', null); closeSheet(); tasks.clear();
-    return start(me);
-  }
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheet) closeSheet(); });
 

@@ -31,6 +31,7 @@ create table if not exists public.invites (
   email text not null,
   invited_by uuid references auth.users on delete set null,
   created_at timestamptz not null default now(),
+  accepted_at timestamptz,
   primary key (calendar_id, email)
 );
 
@@ -75,9 +76,9 @@ begin
   on conflict (id) do update set email = excluded.email;
 
   insert into members (calendar_id, user_id)
-    select calendar_id, uid from invites where lower(email) = lower(em)
+    select i.calendar_id, uid from invites i where lower(i.email) = lower(em) and i.accepted_at is null
   on conflict do nothing;
-  delete from invites where lower(email) = lower(em);
+  update invites set accepted_at = now() where lower(email) = lower(em) and accepted_at is null;
 
   select calendar_id into cid from members where user_id = uid order by joined_at limit 1;
   if cid is null then
@@ -87,13 +88,10 @@ begin
   return cid;
 end $$;
 
--- 캘린더 나가기
-create or replace function public.leave_calendar(cid uuid)
-returns void language plpgsql security definer set search_path = public as $$
-begin
-  delete from members where calendar_id = cid and user_id = auth.uid();
-  delete from calendars c where c.id = cid and not exists (select 1 from members m where m.calendar_id = cid);
-end $$;
+revoke execute on function public.bootstrap() from anon, public;
+revoke execute on function public.is_member(uuid) from anon, public;
+grant execute on function public.bootstrap() to authenticated;
+grant execute on function public.is_member(uuid) to authenticated;
 
 -- RLS
 alter table public.profiles  enable row level security;
