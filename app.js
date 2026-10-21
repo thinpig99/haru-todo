@@ -265,8 +265,9 @@ async function start(user){
 }
 
 async function loadCalendars(fallback){
-  const { data } = await sb.from('members').select('calendar_id, calendars(id, name)').eq('user_id', me.id);
-  calendars = (data || []).map(r => r.calendars).filter(Boolean);
+  const { data } = await sb.from('members').select('calendar_id, joined_at, calendars(id, name, personal, created_by)').eq('user_id', me.id).order('joined_at');
+  calendars = (data || []).map(r => r.calendars).filter(Boolean)
+    .sort((a, b) => (b.personal ? 1 : 0) - (a.personal ? 1 : 0));
   const saved = ls.get('haru-calid');
   const pick = calendars.find(c => c.id === saved) || calendars.find(c => c.id === fallback) || calendars[0];
   cal = pick ? {...pick} : null;
@@ -393,7 +394,9 @@ function peopleBtn(){
   const avs = [...people.values()].slice(0,4).map(p => `<span class="av" style="--pc:var(${p.color})">${esc(p.name.slice(0,1))}</span>`).join('');
   return `<button class="people" data-act="settings" aria-label="캘린더 설정과 멤버">
     <span class="live${live?' on':''}" title="${live?'실시간 연결됨':'연결 중'}"></span>
-    <span>${esc(cal ? cal.name : '')}</span><span class="avs">${avs}</span></button>`;
+    <span class="cal-tag">${cal && cal.personal ? '개인' : '공유'}</span>
+    <span>${esc(cal ? cal.name : '')}</span>${cal && !cal.personal ? `<span class="avs">${avs}</span>` : ''}
+    <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 4.5l3 3 3-3"/></svg></button>`;
 }
 
 function renderDay(){
@@ -455,7 +458,7 @@ function renderDay(){
       body += `<div class="empty"><strong>첫 할 일을 적어보세요</strong>
         <p>날짜를 정한 일은 그날에, 언젠가 할 일은 보관함에 모여요. 끝내지 못한 일은 다음 날로 넘어와요.</p>
         <button class="pill-btn" data-act="add">할 일 추가</button>
-        ${people.size < 2 ? '<button class="pill-btn" data-act="settings">함께 쓸 사람 초대</button>' : ''}</div>`;
+        ${!cal.personal && people.size < 2 ? '<button class="pill-btn" data-act="settings">함께 쓸 사람 초대</button>' : ''}</div>`;
     } else if (!dn.length) {
       body += `<div class="empty"><strong>${isToday?'오늘은 비어 있어요':'이 날은 비어 있어요'}</strong><p>오른쪽 아래 + 버튼으로 할 일을 추가하세요.</p></div>`;
     } else {
@@ -747,36 +750,47 @@ function annivAct(k, v){
 
 /* ---------- settings sheet ---------- */
 let setMsg = null;
-function openSettings(){ sheet = {mode:'settings'}; setMsg = null; drawSettings(); }
+function openSettings(){ sheet = {mode:'settings', armed:null}; setMsg = null; drawSettings(); }
 function drawSettings(){
   const mine = person(me.id);
-  const members = [...people.entries()].map(([id,p]) => `<div class="mrow">
-      <span class="av lg" style="--pc:var(${p.color})">${esc(p.name.slice(0,1))}</span>
-      <div class="mi"><strong>${esc(p.name)}</strong><span>${esc(p.email || '')}</span></div>
-      ${id === me.id ? '<span class="tag">나</span>' : ''}</div>`).join('');
-  const pend = invites.map(e => `<div class="mrow"><div class="mi"><strong>${esc(e)}</strong><span>가입하거나 로그인하면 자동으로 합류해요</span></div>
+  const isOwner = cal.created_by === me.id;
+  const calRows = calendars.map(c => `<button class="calrow${c.id===cal.id?' on':''}" data-st="switch" data-v="${c.id}" aria-pressed="${c.id===cal.id}">
+      <span class="radio"></span><span class="mi"><strong>${esc(c.name)}</strong><span>${c.personal ? '나만 보는 캘린더' : '함께 쓰는 캘린더'}</span></span>
+      <span class="tag">${c.personal ? '개인' : '공유'}</span></button>`).join('');
+  const members = [...people.entries()].map(([id,p]) => {
+    const kickBtn = isOwner && id !== me.id
+      ? `<button class="t-act${sheet.armed===id?' danger-on':''}" data-st="kick" data-v="${id}">${sheet.armed===id?'한 번 더 누르면 내보내기':'내보내기'}</button>` : '';
+    const tag = id === me.id ? '<span class="tag">나</span>' : (id === cal.created_by ? '<span class="tag">만든 사람</span>' : '');
+    return `<div class="mrow"><span class="av lg" style="--pc:var(${p.color})">${esc(p.name.slice(0,1))}</span>
+      <div class="mi"><strong>${esc(p.name)}</strong><span>${esc(p.email || '')}</span></div>${tag}${kickBtn}</div>`;
+  }).join('');
+  const pend = invites.map(e => `<div class="mrow"><span class="av lg ghost">?</span><div class="mi"><strong>${esc(e)}</strong><span>초대됨 · 이 이메일로 가입하거나 로그인하면 합류해요</span></div>
       <button class="t-act" data-st="uninvite" data-v="${esc(e)}">취소</button></div>`).join('');
-  const switcher = calendars.length > 1 ? `<div class="lbl">캘린더 선택</div><div class="chips wrap">${calendars.map(c =>
-      `<button class="chip" data-st="switch" data-v="${c.id}" aria-pressed="${c.id===cal.id}">${esc(c.name)}</button>`).join('')}</div>` : '';
-  document.getElementById('sheetRoot').innerHTML = `<div class="scrim" data-st="close"></div>
-  <div class="sheet" role="dialog" aria-modal="true" aria-label="캘린더 설정"><div class="sheet-in">
-    <div class="grab"></div>
-    <h2>캘린더 설정</h2>
-    ${switcher}
-    <div class="lbl">캘린더 이름</div>
-    <div class="inline"><input class="field" id="stCalName" value="${esc(cal.name)}" maxlength="30"><button class="btn" data-st="rename">변경</button></div>
-    <div class="lbl">함께 쓰는 사람</div>
+
+  const sharedPart = cal.personal ? `<p class="hint">개인 캘린더는 나만 볼 수 있어요. 함께 쓰려면 위에서 공유 캘린더를 만들거나 고르세요.</p>` : `
+    <div class="lbl">함께 쓰는 사람 ${people.size}</div>
     <div>${members}${pend}</div>
     <div class="lbl">이메일로 초대</div>
     <div class="inline"><input class="field" id="stInvite" type="email" inputmode="email" placeholder="상대방 이메일" autocomplete="off"><button class="btn primary" data-st="invite">초대</button></div>
-    <p class="hint">상대방이 이 이메일로 가입하거나 로그인하면 이 캘린더에 바로 합류해요. 앱 주소는 따로 전해주세요: ${esc(location.origin)}</p>
+    <p class="hint">상대방이 이 이메일로 가입하거나 로그인하면 바로 합류해요. 앱 주소도 함께 전해주세요: ${esc(location.origin)}</p>
+    ${!isOwner ? `<button class="btn danger${sheet.armed==='leave'?' armed':''}" data-st="leave">${sheet.armed==='leave'?'한 번 더 누르면 나가기':'이 캘린더에서 나가기'}</button>` : ''}`;
+
+  document.getElementById('sheetRoot').innerHTML = `<div class="scrim" data-st="close"></div>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="캘린더"><div class="sheet-in">
+    <div class="grab"></div>
+    <h2>캘린더</h2>
+    <div class="callist">${calRows}</div>
+    <div class="inline"><input class="field" id="stNewCal" placeholder="새 공유 캘린더 이름 (예: 우리집 할 일)" maxlength="30" autocomplete="off"><button class="btn" data-st="create">만들기</button></div>
     ${setMsg ? `<p class="msg ${setMsg.ok?'ok':'err'}">${esc(setMsg.text)}</p>` : ''}
+    <div class="divider"></div>
+    <h2 style="font-size:15px">${esc(cal.name)} 설정</h2>
+    <div class="lbl">캘린더 이름</div>
+    <div class="inline"><input class="field" id="stCalName" value="${esc(cal.name)}" maxlength="30"><button class="btn" data-st="rename">변경</button></div>
+    ${sharedPart}
+    <div class="divider"></div>
     <div class="lbl">내 이름</div>
     <div class="inline"><input class="field" id="stMyName" value="${esc(mine.name)}" maxlength="20"><button class="btn" data-st="myname">변경</button></div>
-    <div class="row">
-      <button class="btn" data-st="logout">로그아웃</button>
-    </div>
-    <button class="btn" data-st="close">닫기</button>
+    <div class="row"><button class="btn" data-st="logout">로그아웃</button><button class="btn" data-st="close">닫기</button></div>
   </div></div>`;
 }
 
@@ -801,17 +815,43 @@ document.getElementById('sheetRoot').addEventListener('click', async e => {
 
 async function settingsAct(k, v){
   if (k === 'close') return closeSheet();
+  if (k !== 'kick' && k !== 'leave') sheet.armed = null;
   if (k === 'invite') {
     const email = document.getElementById('stInvite').value.trim().toLowerCase();
     if (!/^\S+@\S+\.\S+$/.test(email)) { setMsg = {text:'이메일 주소를 확인해 주세요.'}; return drawSettings(); }
     if ([...people.values()].some(p => (p.email||'').toLowerCase() === email)) { setMsg = {text:'이미 함께 쓰고 있는 사람이에요.'}; return drawSettings(); }
-    const { error } = await sb.from('invites').insert({calendar_id: cal.id, email, invited_by: me.id});
-    if (error && !String(error.code).startsWith('23')) { setMsg = {text:'초대하지 못했어요: ' + error.message}; return drawSettings(); }
+    const { error } = await sb.from('invites').upsert({calendar_id: cal.id, email, invited_by: me.id, accepted_at: null});
+    if (error) { setMsg = {text:'초대하지 못했어요: ' + error.message}; return drawSettings(); }
     await loadInvites(); setMsg = {ok:true, text:`${email} 님을 초대했어요.`}; return drawSettings();
   }
   if (k === 'uninvite') {
     await sb.from('invites').delete().eq('calendar_id', cal.id).eq('email', v);
     await loadInvites(); return drawSettings();
+  }
+  if (k === 'kick') {
+    if (sheet.armed !== v) { sheet.armed = v; return drawSettings(); }
+    const name = person(v).name;
+    const { error } = await sb.from('members').delete().eq('calendar_id', cal.id).eq('user_id', v);
+    sheet.armed = null;
+    if (error) { setMsg = {text:'내보내지 못했어요: ' + error.message}; return drawSettings(); }
+    await loadPeople(); setMsg = {ok:true, text:`${name} 님을 내보냈어요.`}; render(); return drawSettings();
+  }
+  if (k === 'leave') {
+    if (sheet.armed !== 'leave') { sheet.armed = 'leave'; return drawSettings(); }
+    const { error } = await sb.from('members').delete().eq('calendar_id', cal.id).eq('user_id', me.id);
+    if (error) { setMsg = {text:'나가지 못했어요: ' + error.message}; sheet.armed = null; return drawSettings(); }
+    closeSheet(); ls.set('haru-calid', null); tasks.clear(); annivs.clear(); resetEvents();
+    return start(me);
+  }
+  if (k === 'create') {
+    const name = document.getElementById('stNewCal').value.trim() || '우리집 할 일';
+    const { data: cid, error } = await sb.rpc('create_shared_calendar', {p_name: name});
+    if (error) { setMsg = {text:'만들지 못했어요: ' + error.message}; return drawSettings(); }
+    await loadCalendars(cid);
+    cal = {...(calendars.find(c => c.id === cid) || cal)};
+    st.sel = today(); await openCalendar();
+    setMsg = {ok:true, text:`'${name}' 캘린더를 만들었어요. 이제 함께 쓸 사람을 초대하세요.`};
+    sheet = {mode:'settings', armed:null}; return drawSettings();
   }
   if (k === 'rename') {
     const name = document.getElementById('stCalName').value.trim(); if (!name) return;
@@ -827,7 +867,9 @@ async function settingsAct(k, v){
   }
   if (k === 'switch') {
     const c = calendars.find(x => x.id === v); if (!c || c.id === cal.id) return;
-    cal = {...c}; closeSheet(); st.sel = today(); return openCalendar();
+    cal = {...c}; st.sel = today(); setMsg = null;
+    await openCalendar();
+    sheet = {mode:'settings', armed:null}; return drawSettings();
   }
   if (k === 'logout') { closeSheet(); await sb.auth.signOut(); return; }
 }
@@ -893,6 +935,10 @@ let lastDay = today();
 document.addEventListener('visibilitychange', async () => {
   if (document.hidden || !me || !cal) return;
   if (today() !== lastDay) { if (st.sel === lastDay) st.sel = today(); lastDay = today(); }
+  const prev = cal.id;
+  await loadCalendars(prev);
+  if (!cal) return start(me);
+  if (cal.id !== prev) { toast('이 캘린더에서 빠졌어요. 다른 캘린더로 옮겼어요.'); return openCalendar(); }
   await Promise.all([loadTasks(), loadPeople(), loadInvites(), loadAnnivs()]);
   render();
   ensurePrepTasks();

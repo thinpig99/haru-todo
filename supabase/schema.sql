@@ -162,3 +162,24 @@ create unique index if not exists tasks_anniv_occ_uniq on public.tasks (anniv_id
 
 alter table public.anniversaries replica identity full;
 alter publication supabase_realtime add table public.anniversaries;
+
+-- 개인 캘린더, 공유 캘린더 만들기, 내보내기/나가기, 재초대
+alter table public.calendars add column if not exists personal boolean not null default false;
+-- bootstrap(): 초대 수락 + 개인 캘린더('내 캘린더') 보장 (위 정의를 대체, 배포본 기준)
+-- create_shared_calendar(p_name text): 공유 캘린더 생성 후 만든 사람을 멤버로 추가
+create policy "members remove" on public.members for delete to authenticated
+  using (
+    user_id = (select auth.uid())
+    or exists (select 1 from public.calendars c where c.id = members.calendar_id and c.created_by = (select auth.uid()) and not c.personal)
+  );
+alter policy "invites create" on public.invites
+  with check (
+    public.is_member(calendar_id) and invited_by = (select auth.uid())
+    and not exists (select 1 from public.calendars c where c.id = invites.calendar_id and c.personal)
+  );
+create policy "invites update" on public.invites for update to authenticated
+  using (public.is_member(calendar_id))
+  with check (
+    public.is_member(calendar_id) and invited_by = (select auth.uid())
+    and not exists (select 1 from public.calendars c where c.id = invites.calendar_id and c.personal)
+  );
