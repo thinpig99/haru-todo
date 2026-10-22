@@ -258,6 +258,7 @@ function authError(e){
 /* ---------- data loading ---------- */
 async function start(user){
   me = user;
+  initPush();
   $app.innerHTML = '<div class="boot">불러오는 중</div>';
   const { data: firstCid, error } = await sb.rpc('bootstrap');
   if (error) { $app.innerHTML = `<div class="empty"><strong>연결하지 못했어요</strong><p>${esc(error.message)}</p><button class="pill-btn" onclick="location.reload()">다시 시도</button></div>`; return; }
@@ -766,9 +767,100 @@ function annivAct(k, v){
   }
 }
 
+/* ---------- push notifications ---------- */
+const push = { reg:null, sub:null, settings:null, busy:false, msg:null };
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function b64ToU8(b64){ const pad = '='.repeat((4 - b64.length % 4) % 4); const raw = atob((b64 + pad).replace(/-/g,'+').replace(/_/g,'/')); return Uint8Array.from([...raw].map(c => c.charCodeAt(0))); }
+function u8ToB64(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+
+async function initPush(){
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    push.reg = await navigator.serviceWorker.register('/sw.js');
+    navigator.serviceWorker.addEventListener('message', e => {
+      if (e.data && e.data.type === 'open-today') { st.view = 'day'; st.sel = today(); closeSheet(); render(); }
+    });
+    if (push.reg.pushManager) push.sub = await push.reg.pushManager.getSubscription();
+    if (push.sub && me) await saveSub(push.sub);   // 기기 정보를 최신으로 유지
+  } catch (e) { console.warn('sw', e); }
+}
+async function saveSub(sub){
+  const j = sub.toJSON();
+  await sb.from('push_subscriptions').upsert({ endpoint: sub.endpoint, user_id: me.id,
+    p256dh: j.keys.p256dh || u8ToB64(sub.getKey('p256dh')), auth: j.keys.auth || u8ToB64(sub.getKey('auth')),
+    ua: navigator.userAgent.slice(0, 200) });
+}
+async function loadNotifSettings(){
+  const { data } = await sb.from('notif_settings').select('*').eq('user_id', me.id).maybeSingle();
+  push.settings = data || { user_id: me.id, morning_on:true, morning_time:'08:00', evening_on:true, evening_time:'21:00' };
+}
+async function saveNotifSettings(patch){
+  push.settings = { ...push.settings, ...patch };
+  const { morning_on, morning_time, evening_on, evening_time } = push.settings;
+  const { error } = await sb.from('notif_settings').upsert({ user_id: me.id, morning_on, morning_time, evening_on, evening_time, updated_at: new Date().toISOString() });
+  push.msg = error ? {text:'알림 설정을 저장하지 못했어요.'} : {ok:true, text:'알림 설정을 저장했어요.'};
+}
+async function sendTestPush(){
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch(CFG.supabaseUrl + '/functions/v1/notify', { method:'POST',
+    headers:{ 'Content-Type':'application/json', apikey: CFG.supabaseAnonKey, Authorization: 'Bearer ' + session.access_token },
+    body: JSON.stringify({ mode:'test' }) });
+  const j = await r.json().catch(() => ({}));
+  return j.sent || 0;
+}
+async function enablePush(){
+  if (push.busy) return; push.busy = true; push.msg = null;
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { push.msg = {text:'알림이 허용되지 않았어요. 아이폰 설정 > 알림 > 할 일에서 허용할 수 있어요.'}; return; }
+    if (!push.reg) push.reg = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready;
+    push.sub = await push.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(CFG.vapidPublicKey) });
+    await saveSub(push.sub);
+    await saveNotifSettings({});
+    const n = await sendTestPush();
+    push.msg = n ? {ok:true, text:'알림을 켰어요. 확인용 알림을 보냈어요.'} : {text:'알림은 켰는데 확인용 알림을 보내지 못했어요. 잠시 후 테스트를 눌러보세요.'};
+  } catch (e) {
+    push.msg = {text:'알림을 켜지 못했어요: ' + (e.message || e)};
+  } finally { push.busy = false; if (sheet && sheet.mode === 'settings') drawSettings(); }
+}
+async function disablePush(){
+  try {
+    if (push.sub) { await sb.from('push_subscriptions').delete().eq('endpoint', push.sub.endpoint); await push.sub.unsubscribe(); }
+  } catch {}
+  push.sub = null; push.msg = {ok:true, text:'이 기기에서 알림을 껐어요.'};
+}
+function notifSection(){
+  let inner;
+  if (isIOS && !isStandalone()) {
+    inner = `<p class="hint">아이폰에서는 홈 화면에 추가한 앱에서만 알림을 받을 수 있어요. Safari 공유 버튼 → 홈 화면에 추가 → 그 아이콘으로 열어서 여기서 켜주세요.</p>`;
+  } else if (!pushSupported()) {
+    inner = `<p class="hint">이 브라우저는 알림을 지원하지 않아요.</p>`;
+  } else if (Notification.permission === 'denied') {
+    inner = `<p class="hint">알림이 차단되어 있어요. 아이폰 설정 → 알림 → 할 일에서 허용해 주세요.</p>`;
+  } else if (!push.sub) {
+    inner = `<p class="hint">매일 아침 오늘 할 일을, 저녁에는 아직 못 끝낸 일을 알려드려요.</p>
+      <button class="btn primary" data-st="pushOn" ${push.busy?'disabled':''}>${push.busy?'켜는 중':'알림 켜기'}</button>`;
+  } else {
+    const ns = push.settings || {};
+    const row = (key, label, desc) => `<div class="nrow">
+      <button class="chip" data-st="ntoggle" data-v="${key}" aria-pressed="${!!ns[key+'_on']}"><span class="tick">${ns[key+'_on']?'✓':''}</span>${label}</button>
+      <input class="date-in ntime" type="time" id="nt-${key}" value="${esc(ns[key+'_time'] || '')}" ${ns[key+'_on']?'':'disabled'} aria-label="${label} 시간">
+      <span class="ndesc">${desc}</span></div>`;
+    inner = row('morning', '아침 알림', '오늘 할 일과 밀린 일') + row('evening', '저녁 알림', '아직 못 끝낸 일 (다 끝내면 안 보냄)') +
+      `<div class="row"><button class="btn" data-st="pushTest">테스트 알림</button><button class="btn" data-st="pushOff">이 기기 알림 끄기</button></div>`;
+  }
+  return `<div class="lbl">알림</div>${inner}${push.msg ? `<p class="msg ${push.msg.ok?'ok':'err'}">${esc(push.msg.text)}</p>` : ''}`;
+}
+
 /* ---------- settings sheet ---------- */
 let setMsg = null;
-function openSettings(){ sheet = {mode:'settings', armed:null}; setMsg = null; drawSettings(); }
+function openSettings(){
+  sheet = {mode:'settings', armed:null}; setMsg = null; push.msg = null; drawSettings();
+  if (!push.settings) loadNotifSettings().then(() => { if (sheet && sheet.mode === 'settings') drawSettings(); });
+}
 function drawSettings(){
   const mine = person(me.id);
   const isOwner = cal.created_by === me.id;
@@ -805,6 +897,8 @@ function drawSettings(){
     <div class="lbl">캘린더 이름</div>
     <div class="inline"><input class="field" id="stCalName" value="${esc(cal.name)}" maxlength="30"><button class="btn" data-st="rename">변경</button></div>
     ${sharedPart}
+    <div class="divider"></div>
+    ${notifSection()}
     <div class="divider"></div>
     <div class="lbl">내 이름</div>
     <div class="inline"><input class="field" id="stMyName" value="${esc(mine.name)}" maxlength="20"><button class="btn" data-st="myname">변경</button></div>
@@ -889,9 +983,26 @@ async function settingsAct(k, v){
     await openCalendar();
     sheet = {mode:'settings', armed:null}; return drawSettings();
   }
-  if (k === 'logout') { closeSheet(); await sb.auth.signOut(); return; }
+  if (k === 'pushOn') { enablePush(); return drawSettings(); }
+  if (k === 'pushOff') { await disablePush(); return drawSettings(); }
+  if (k === 'pushTest') { const n = await sendTestPush(); push.msg = n ? {ok:true, text:'테스트 알림을 보냈어요.'} : {text:'보낼 기기가 없어요. 알림을 다시 켜주세요.'}; return drawSettings(); }
+  if (k === 'ntoggle') { await saveNotifSettings({ [v + '_on']: !push.settings[v + '_on'] }); return drawSettings(); }
+  if (k === 'logout') {
+    closeSheet();
+    if (push.sub) { try { await sb.from('push_subscriptions').delete().eq('endpoint', push.sub.endpoint); } catch {} }
+    push.settings = null;
+    await sb.auth.signOut(); return;
+  }
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheet) closeSheet(); });
+document.getElementById('sheetRoot').addEventListener('change', async e => {
+  const t = e.target;
+  if (t.classList && t.classList.contains('ntime') && t.value) {
+    const key = t.id.replace('nt-', '');
+    await saveNotifSettings({ [key + '_time']: t.value });
+    if (sheet && sheet.mode === 'settings') drawSettings();
+  }
+});
 
 /* ---------- main actions ---------- */
 function setCal(v){

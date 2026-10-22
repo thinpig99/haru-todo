@@ -183,3 +183,9 @@ create policy "invites update" on public.invites for update to authenticated
     public.is_member(calendar_id) and invited_by = (select auth.uid())
     and not exists (select 1 from public.calendars c where c.id = invites.calendar_id and c.personal)
   );
+
+-- 푸시 알림 (아침/저녁 요약)
+-- push_subscriptions: 기기별 구독 / notif_settings: 사람별 시간 설정
+-- 비밀값(VAPID 키, cron 토큰)은 Supabase Vault에 haru_vapid_public / haru_vapid_private / haru_cron_token 으로 보관
+-- public.push_config(): service_role 전용으로 Vault 값을 읽음
+-- pg_cron 'haru-notify' 작업이 5분마다 functions/v1/notify 를 호출
