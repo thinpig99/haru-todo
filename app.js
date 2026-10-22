@@ -427,32 +427,28 @@ function renderDay(){
     // 마지막 주가 다음 달로만 채워지면 5주만 표시
     const weeks = addDays(gStart, 35).slice(0,7) === ymd(first).slice(0,7) ? 6 : 5;
     const byDate = {};
-    if (st.big) all.forEach(t => { if (t.date) (byDate[t.date] = byDate[t.date] || []).push(t); });
+    all.forEach(t => { if (t.date) (byDate[t.date] = byDate[t.date] || []).push(t); });
+    const MAX = Math.max(2, Math.floor((rowMax(weeks) - 34) / 16));
     for (let i = 0; i < weeks * 7; i++){
       const s = addDays(gStart, i), dd = parse(s), n = undoneOn(s);
       const cls = ['mday', i%7===0?'sun':'', i%7===6?'sat':'', hol(s)?'hol':'', dd.getMonth()!==d.getMonth()?'out':'', s===T?'today':'', s===sel?'sel':''].join(' ');
       const label = `${dd.getMonth()+1}월 ${dd.getDate()}일${hol(s)?' '+hol(s):''}, 할 일 ${n}개`;
-      if (!st.big) {
-        cells += `<button class="${cls}" data-act="pick" data-date="${s}" aria-label="${label}">
-          <span class="dn">${dd.getDate()}</span>${dots(n, s)}</button>`;
-        continue;
-      }
       const items = [];
       if (hol(s)) items.push(`<span class="bi hl">${esc(hol(s))}</span>`);
       eventsOn(s).forEach(e => items.push(`<span class="bi ev${e.main?'':' ms'}">${esc(e.label)}</span>`));
       (byDate[s] || []).sort((a,b) => (a.done - b.done) || (a.createdAt - b.createdAt))
         .forEach(t => items.push(`<span class="bi${t.done?' dn-t':''}" style="--cc:var(${catOf(t.cat).v})">${esc(t.title)}</span>`));
-      const MAX = 4, more = items.length - MAX;
-      cells += `<button class="${cls}" data-act="pickBig" data-date="${s}" aria-label="${label}">
-        <span class="dn">${dd.getDate()}</span>
-        <span class="bitems">${items.slice(0, more > 0 ? MAX - 1 : MAX).join('')}${more > 0 ? `<span class="bmore">+${more + 1}</span>` : ''}</span></button>`;
+      const more = items.length - MAX;
+      cells += `<button class="${cls}" data-act="pick" data-date="${s}" aria-label="${label}">
+        <span class="dn">${dd.getDate()}</span>${dots(n, s)}
+        <span class="bitems" aria-hidden="true">${items.slice(0, more > 0 ? MAX - 1 : MAX).join('')}${more > 0 ? `<span class="bmore">+${more + 1}</span>` : ''}</span></button>`;
     }
-    calHTML = `<div class="month cal-swipe${st.big?' big':''}"><div class="m-head">
+    calHTML = `<div class="month cal-swipe"><div class="m-head">
       <button class="wk-nav" data-act="month" data-dir="-1" aria-label="이전 달">‹</button>
       <span>${d.getFullYear()}년 ${d.getMonth()+1}월</span>
       <button class="wk-nav" data-act="month" data-dir="1" aria-label="다음 달">›</button></div>
       <div class="m-grid" style="--weeks:${weeks}">${cells}</div>
-      <button class="grip" data-act="big" aria-label="${st.big ? '달력 접기' : '달력 펼쳐서 할 일 보기'}"><span></span></button></div>`;
+      <button class="grip" data-act="big" aria-label="달력 펼치기 또는 접기"><span></span></button></div>`;
   }
 
   const overdue = isToday ? all.filter(t => !t.done && t.date && t.date < T).sort((a,b)=> a.date < b.date ? -1 : 1) : [];
@@ -487,17 +483,6 @@ function renderDay(){
   if (dn.length) body += `<section class="sec"><div class="sec-h"><span>완료 ${dn.length}</span><button data-act="toggleDone">${st.showDone?'접기':'펼치기'}</button></div>
     ${st.showDone ? `<div class="list">${dn.map(t => taskRow(t)).join('')}</div>` : ''}</section>`;
 
-  if (st.cal === 'month' && st.big) {
-    return `<header class="top compact">
-      <div class="date-meta"><span class="date-dow" style="font-size:22px">${d.getFullYear()}년 ${d.getMonth()+1}월</span></div>
-      <div class="top-right">${peopleBtn()}<div class="top-btns">
-        ${sel.slice(0,7) === T.slice(0,7) ? '' : '<button class="pill-btn" data-act="goToday">오늘</button>'}
-        <div class="seg" role="group" aria-label="달력 보기">
-          <button data-act="cal" data-v="week" aria-pressed="false">주</button>
-          <button data-act="cal" data-v="month" aria-pressed="true">월</button>
-        </div></div></div>
-    </header>${calHTML}`;
-  }
   const red = isToday || hol(sel) || d.getDay() === 0;
   return `
   <header class="top">
@@ -519,9 +504,11 @@ function renderDay(){
     </div>
   </header>
   ${calHTML}
+  <div class="below">
   ${totalNow ? `<div class="prog"><span>${dayDone.length} / ${totalNow} 완료</span><div class="bar"><b style="width:${pct}%"></b></div></div>` : ''}
   ${pool.length ? catChips(pool) : ''}
-  ${body}`;
+  ${body}
+  </div>`;
 }
 
 function pageHead(sub, title){
@@ -635,6 +622,7 @@ function render(){
   if (!me || !cal) return;
   $app.innerHTML = st.view === 'day' ? renderDay() : st.view === 'box' ? renderBox() : st.view === 'anniv' ? renderAnniv() : renderLog();
   renderTabs();
+  afterRender();
   if (lastToggled) { const r = $app.querySelector(`[data-row="${lastToggled}"]`); if (r) r.classList.add('pop'); lastToggled = null; }
 }
 
@@ -906,8 +894,49 @@ async function settingsAct(k, v){
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheet) closeSheet(); });
 
 /* ---------- main actions ---------- */
-function setCal(v){ st.cal = v; ls.set('haru-cal', v); if (v === 'week') { st.big = false; ls.set('haru-big', false); } render(); }
-function setBig(v){ st.big = v; ls.set('haru-big', v); if (v) { st.cal = 'month'; ls.set('haru-cal', 'month'); } render(); window.scrollTo(0, 0); }
+function setCal(v){
+  st.cal = v; ls.set('haru-cal', v);
+  if (v === 'week') { st.big = false; ls.set('haru-big', false); }
+  render();
+}
+/* 월력 펼치기: 칸 높이(--rh)와 진행도(--p)를 #app에 두고 애니메이션 */
+const ROW_MIN = 46;
+let rowMaxCache = 0;
+function rowMax(weeks){
+  if (rowMaxCache) return rowMaxCache;
+  return Math.max(70, (window.innerHeight - 330) / (weeks || 5));
+}
+function measureRows(){
+  const grid = $app.querySelector('.m-grid'); if (!grid) return;
+  const weeks = Number(grid.style.getPropertyValue('--weeks')) || 5;
+  const hd = grid.querySelector('.hd'); const tabs = document.getElementById('tabbar');
+  const top = (hd ? hd.getBoundingClientRect().bottom : grid.getBoundingClientRect().top) + window.scrollY;
+  const avail = window.innerHeight - top - (tabs ? tabs.offsetHeight : 64) - 34;
+  rowMaxCache = Math.max(70, Math.floor(avail / weeks));
+}
+function applyRows(p, animate){
+  const rh = ROW_MIN + (rowMax() - ROW_MIN) * p;
+  $app.classList.toggle('dragging', !animate);
+  $app.style.setProperty('--rh', rh + 'px');
+  $app.style.setProperty('--p', String(p));
+}
+function setBig(v){
+  if (st.cal !== 'month') { st.cal = 'month'; ls.set('haru-cal', 'month'); st.big = false; render(); }
+  st.big = v; ls.set('haru-big', v);
+  $app.classList.toggle('is-big', v);
+  if (v && window.scrollY > 0) window.scrollTo({top:0, behavior:'smooth'});
+  requestAnimationFrame(() => applyRows(v ? 1 : 0, true));
+}
+function afterRender(){
+  if (st.view !== 'day' || st.cal !== 'month') { $app.classList.remove('is-big'); return; }
+  const before = rowMaxCache; measureRows();
+  $app.classList.toggle('is-big', st.big);
+  // 새로 그린 화면은 애니메이션 없이 현재 상태로 맞춤
+  applyRows(st.big ? 1 : 0, false);
+  requestAnimationFrame(() => $app.classList.remove('dragging'));
+  if (st.big && Math.abs(before - rowMaxCache) > 8 && !afterRender.again) { afterRender.again = true; render(); afterRender.again = false; }
+}
+window.addEventListener('resize', () => { rowMaxCache = 0; if (st.view === 'day' && st.cal === 'month') render(); });
 function shiftMonth(dir){
   const d = parse(st.sel), m = new Date(d.getFullYear(), d.getMonth() + dir, 1);
   const T = parse(today());
@@ -934,9 +963,12 @@ function onAct(e){
       const T = today(), list = [...tasks.values()].filter(x => !x.done && x.date && x.date < T);
       saveMany(list.map(x => ({...x, date:T}))); toast(`${list.length}개를 오늘로 옮겼어요`, () => saveMany(list));
     } break;
-    case 'pick': st.sel = b.dataset.date; render(); break;
-    case 'pickBig': st.sel = b.dataset.date; setBig(false); break;
-    case 'big': setBig(!st.big); break;
+    case 'pick':
+      if (Date.now() - lastDrag < 350) break;
+      st.sel = b.dataset.date; render();
+      if (st.big) setBig(false);
+      break;
+    case 'big': if (Date.now() - lastDrag >= 350) setBig(!st.big); break;
     case 'pickFromLog': st.sel = b.dataset.date; st.view = 'day'; render(); break;
     case 'week': st.sel = addDays(st.sel, 7 * Number(b.dataset.dir)); render(); break;
     case 'month': shiftMonth(Number(b.dataset.dir)); break;
@@ -954,22 +986,47 @@ function onAct(e){
 }
 
 // swipe on calendar
-let sx = null, sy = null;
+let sx = null, sy = null, st0 = 0, mode = null, p0 = 0, lastDrag = 0, lastY = 0, lastT = 0, vel = 0;
 $app.addEventListener('touchstart', e => {
-  if (e.target.closest('.cal-swipe')) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }
+  if (!e.target.closest('.cal-swipe')) { sx = null; return; }
+  sx = e.touches[0].clientX; sy = lastY = e.touches[0].clientY; st0 = lastT = performance.now(); mode = null; vel = 0;
+  p0 = st.big ? 1 : 0;
 }, {passive:true});
+$app.addEventListener('touchmove', e => {
+  if (sx === null) return;
+  const x = e.touches[0].clientX, y = e.touches[0].clientY, dx = x - sx, dy = y - sy;
+  if (!mode) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    if (Math.abs(dy) > Math.abs(dx)) {
+      const canDown = dy > 0 && !st.big && window.scrollY <= 2;
+      const canUp = dy < 0 && st.big;
+      const canMonth = st.cal === 'month' || (st.cal === 'week' && dy > 0 && window.scrollY <= 2);
+      mode = (canDown || canUp) && canMonth ? 'v' : 'none';
+      if (mode === 'v' && st.cal === 'week') { setCal('month'); measureRows(); }
+    } else mode = 'h';
+  }
+  if (mode !== 'v') return;
+  e.preventDefault();
+  const now = performance.now(); vel = (y - lastY) / Math.max(1, now - lastT); lastY = y; lastT = now;
+  const span = (rowMax() - ROW_MIN) * ((Number(($app.querySelector('.m-grid')||{style:{getPropertyValue:()=>5}}).style.getPropertyValue('--weeks')) || 5) * 0.8);
+  const p = Math.min(1, Math.max(0, p0 + dy / span));
+  applyRows(p, false);
+}, {passive:false});
 $app.addEventListener('touchend', e => {
   if (sx === null) return;
   const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy; sx = sy = null;
-  if (Math.abs(dy) > Math.abs(dx) * 1.3 && Math.abs(dy) > 50) {
-    if (dy > 0 && !st.big && window.scrollY <= 5) setBig(true);   // 아래로 쓸면 펼치기
-    else if (dy < 0 && st.big) setBig(false);                     // 위로 쓸면 접기
+  if (mode === 'v') {
+    lastDrag = Date.now();
+    const cur = parseFloat($app.style.getPropertyValue('--p')) || 0;
+    const open = vel > 0.35 ? true : vel < -0.35 ? false : cur > 0.5;
+    setBig(open);
     return;
   }
-  if (Math.abs(dx) <= 50) return;
+  if (mode !== 'h' || Math.abs(dx) <= 50) return;
   if (st.cal === 'month') shiftMonth(dx < 0 ? 1 : -1);
   else { st.sel = addDays(st.sel, dx < 0 ? 7 : -7); render(); }
 }, {passive:true});
+$app.addEventListener('touchcancel', () => { if (mode === 'v') setBig(st.big); sx = null; }, {passive:true});
 
 // coming back to the app: refresh data and "today"
 let lastDay = today();
